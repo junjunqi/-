@@ -43,6 +43,7 @@ export interface Hero {
   hp: number;
   hasMetalAttackBuff: boolean;
   persistentShield: ShieldBuff | null;
+  isAI?: boolean; // New flag to identify computer players
 }
 
 export interface GameState {

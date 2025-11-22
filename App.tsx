@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Card, Hero, GameState, HeroKind, Element, CardType 
 } from './types';
@@ -8,14 +8,15 @@ import {
   createBaseDeck, ELEMENT_CN
 } from './constants';
 import * as Logic from './services/gameLogic';
+import * as AIStrategy from './services/aiStrategy';
 import { audio } from './services/audio';
-import CardComponent from './components/Card';
+import CardComponent, { CardBack } from './components/Card';
 import HeroDisplay from './components/HeroDisplay';
 import GameLog from './components/GameLog';
 import ElementAvatar from './components/ElementAvatar';
 
 // Initial Dummy State
-const initialHeroState = (id: number, kind: HeroKind, element: Element, name: string): Hero => ({
+const initialHeroState = (id: number, kind: HeroKind, element: Element, name: string, isAI: boolean = false): Hero => ({
   id,
   name,
   kind,
@@ -23,7 +24,8 @@ const initialHeroState = (id: number, kind: HeroKind, element: Element, name: st
   maxHp: HERO_STARTING_HP,
   hp: HERO_STARTING_HP,
   hasMetalAttackBuff: false,
-  persistentShield: null
+  persistentShield: null,
+  isAI
 });
 
 const App: React.FC = () => {
@@ -48,6 +50,9 @@ const App: React.FC = () => {
   const [screenShake, setScreenShake] = useState(false);
   const [screenFlash, setScreenFlash] = useState<'red' | 'gold' | null>(null);
   const [isMuted, setIsMuted] = useState(false);
+  
+  // AI Timer Ref
+  const aiTimeoutRef = useRef<number | null>(null);
 
   // ---------------- Init Audio ----------------
   useEffect(() => {
@@ -61,6 +66,54 @@ const App: React.FC = () => {
       window.addEventListener('click', initAudio, { once: true });
       return () => window.removeEventListener('click', initAudio);
   }, [gameState.phase, isMuted]);
+
+  // ---------------- AI Loop ----------------
+  useEffect(() => {
+    const currentPlayer = gameState.players[gameState.currentPlayerIndex];
+    const defenderIndex = gameState.currentPlayerIndex === 0 ? 1 : 0;
+    const defender = gameState.players[defenderIndex];
+
+    // Clear any existing timers on state change
+    if (aiTimeoutRef.current) {
+        clearTimeout(aiTimeoutRef.current);
+        aiTimeoutRef.current = null;
+    }
+
+    // 1. AI Turn Logic (Active Phase)
+    if (gameState.phase === 'PLAYER_TURN' && currentPlayer?.isAI && !gameState.pendingAttack) {
+         aiTimeoutRef.current = window.setTimeout(() => {
+             const aiHand = gameState.hands[gameState.currentPlayerIndex];
+             const action = AIStrategy.decideTurnAction(currentPlayer, aiHand, defender, gameState.hasAttackedThisTurn);
+             
+             if (action.type === 'PLAY_CARD') {
+                 const result = handlePlayCard(action.card, action.cardIndex);
+                 // Safety fallback: If AI tried to play an invalid card and it was rejected, end turn
+                 if (result === false) {
+                    console.warn("AI attempted invalid move, forcing end turn.");
+                    endTurn();
+                 }
+             } else {
+                 endTurn();
+             }
+         }, 1000); // Reduced thinking time to 1.0s
+    }
+
+    // 2. AI Reaction Logic (Defender Phase)
+    if (gameState.phase === 'DEFENDER_REACTION' && defender?.isAI && gameState.pendingAttack) {
+         aiTimeoutRef.current = window.setTimeout(() => {
+             const aiHand = gameState.hands[defenderIndex];
+             const reactionCard = AIStrategy.decideReaction(
+                 defender, 
+                 aiHand, 
+                 gameState.pendingAttack!.card, 
+                 gameState.pendingAttack!.initialDamage
+             );
+             handleDefenderReaction(reactionCard);
+         }, 1000);
+    }
+
+    // ADDED gameState.hands to dependencies to trigger re-eval after playing Heal/Defense
+  }, [gameState.phase, gameState.turnCount, gameState.currentPlayerIndex, gameState.pendingAttack, gameState.hasAttackedThisTurn, gameState.hands]);
 
   // ---------------- Helpers ----------------
   const addLog = (msg: string) => {
@@ -103,8 +156,11 @@ const App: React.FC = () => {
 
   // ---------------- Game Flow Actions ----------------
 
-  const initializeGame = (hero1Kind: HeroKind, hero2Kind: HeroKind) => {
-    const getHeroDetails = (kind: HeroKind, id: number) => {
+  const initializeGame = (playerHeroKind: HeroKind) => {
+    const heroes = Object.keys(HERO_NAMES) as HeroKind[];
+    const aiHeroKind = heroes[Math.floor(Math.random() * heroes.length)];
+
+    const getHeroDetails = (kind: HeroKind, id: number, isAI: boolean) => {
       const map: Record<HeroKind, {el: Element}> = {
         [HeroKind.WoodHero]: { el: Element.Wood },
         [HeroKind.FireHero]: { el: Element.Fire },
@@ -112,19 +168,19 @@ const App: React.FC = () => {
         [HeroKind.MetalHero]: { el: Element.Metal },
         [HeroKind.WaterHero]: { el: Element.Water },
       };
-      // Use HERO_NAMES for the hero name
-      return initialHeroState(id, kind, map[kind].el, HERO_NAMES[kind]);
+      let name = HERO_NAMES[kind];
+      if (isAI) name += " (电脑)";
+      return initialHeroState(id, kind, map[kind].el, name, isAI);
     };
 
-    const p1 = getHeroDetails(hero1Kind, 0);
-    const p2 = getHeroDetails(hero2Kind, 1);
+    const p1 = getHeroDetails(playerHeroKind, 0, false);
+    const p2 = getHeroDetails(aiHeroKind, 1, true);
     
     let deck = Logic.shuffleDeck(createBaseDeck());
     const hand1: Card[] = [];
     const hand2: Card[] = [];
     const discard: Card[] = [];
 
-    // Draw Initial Hands
     const draw = (hand: Card[]) => {
       if (deck.length === 0) return;
       hand.push(deck[0]);
@@ -144,7 +200,7 @@ const App: React.FC = () => {
       hands: [hand1, hand2],
       deck,
       discard,
-      logs: ['游戏开始！第 1 回合。', `${p1.name} 对战 ${p2.name}`],
+      logs: ['游戏开始！', `${p1.name} 对战 ${p2.name}`],
       pendingAttack: null,
       hasAttackedThisTurn: false
     });
@@ -164,7 +220,6 @@ const App: React.FC = () => {
         if (newDiscard.length === 0) {
           return { ...prev, logs: [...logs, "牌库和弃牌堆已空！无法抽牌。"] };
         }
-        // Reshuffle
         logs = [...logs, "牌库耗尽，弃牌堆洗切为牌库。"];
         const shuffled = Logic.shuffleDeck(newDiscard);
         newDeck.push(...shuffled);
@@ -189,26 +244,46 @@ const App: React.FC = () => {
   const endTurn = () => {
     const nextPlayerIdx = gameState.currentPlayerIndex === 0 ? 1 : 0;
     const nextTurnCount = nextPlayerIdx === 0 ? gameState.turnCount + 1 : gameState.turnCount;
-    
+    const nextPlayer = gameState.players[nextPlayerIdx];
+
     setGameState(prev => ({
       ...prev,
       phase: 'PLAYER_TURN',
       currentPlayerIndex: nextPlayerIdx,
       turnCount: nextTurnCount,
       hasAttackedThisTurn: false,
-      logs: [...prev.logs, `--- 回合结束。轮到 ${prev.players[nextPlayerIdx].name} ---`]
+      logs: [...prev.logs, `--- 回合结束。轮到 ${nextPlayer.name} ---`]
     }));
     
-    // Draw card for next player immediately
     setTimeout(() => drawCard(nextPlayerIdx), 300);
   };
 
   // ---------------- Card Interaction Handlers ----------------
 
-  const handlePlayCard = (card: Card, cardIndex: number) => {
+  // Returns true if card was played successfully, false if invalid
+  const handlePlayCard = (card: Card, cardIndex: number): boolean => {
     const currentPlayer = gameState.players[gameState.currentPlayerIndex];
     const opponentIndex = gameState.currentPlayerIndex === 0 ? 1 : 0;
     const opponentHand = gameState.hands[opponentIndex];
+
+    // --- Validation Checks ---
+    if (card.type === CardType.Attack && gameState.hasAttackedThisTurn) return false;
+    
+    if (card.type === CardType.Heal && currentPlayer.hp >= currentPlayer.maxHp) {
+        // Only show alert for human player
+        if (!currentPlayer.isAI) {
+            alert("生命值已满，无需恢复！");
+        }
+        return false;
+    }
+
+    if (card.type === CardType.Defense && currentPlayer.persistentShield) {
+        if (!currentPlayer.isAI) {
+            alert("已有护盾，无法叠加！");
+        }
+        return false;
+    }
+    // -------------------------
 
     const consumeCard = () => {
       const newHands = [...gameState.hands];
@@ -217,10 +292,6 @@ const App: React.FC = () => {
     };
 
     if (card.type === CardType.Attack) {
-      if (gameState.hasAttackedThisTurn) {
-        addLog("本回合你已经攻击过了！");
-        return;
-      }
       audio.playAttack();
 
       const { damage, log, effect } = Logic.calculateAttackDamage(currentPlayer, card);
@@ -250,10 +321,6 @@ const App: React.FC = () => {
       }
 
     } else if (card.type === CardType.Defense) {
-       if (currentPlayer.persistentShield) {
-         addLog("你已经拥有护盾了！");
-         return;
-       }
        audio.playDefense();
        const { value, log, effect } = Logic.calculateDefenseValue(currentPlayer, card);
        triggerVisuals(effect);
@@ -294,6 +361,8 @@ const App: React.FC = () => {
         discard: [...prev.discard, card]
       }));
     }
+    
+    return true;
   };
 
   // ---------------- Resolution Logic ----------------
@@ -306,6 +375,13 @@ const App: React.FC = () => {
       let defender = { ...prev.players[defenderIdx] };
       const logs = [...prev.logs];
       const discard = [...prev.discard];
+
+      // Atomically update hands if defense card was used
+      // This prevents race conditions where separate setGameState calls might conflict
+      const hands = [...prev.hands];
+      if (defenseCard) {
+          hands[defenderIdx] = hands[defenderIdx].filter(c => c.id !== defenseCard.id);
+      }
 
       let currentDamage = attack.initialDamage;
 
@@ -407,6 +483,7 @@ const App: React.FC = () => {
       return {
         ...prev,
         players: newPlayers,
+        hands, // Updated atomically
         discard,
         logs,
         phase,
@@ -420,13 +497,8 @@ const App: React.FC = () => {
   const handleDefenderReaction = (card: Card | null) => {
     if (!gameState.pendingAttack) return;
     
-    if (card) {
-       const defenderIdx = gameState.currentPlayerIndex === 0 ? 1 : 0;
-       const newHands = [...gameState.hands];
-       newHands[defenderIdx] = newHands[defenderIdx].filter(c => c.id !== card.id);
-       setGameState(prev => ({ ...prev, hands: newHands }));
-    }
-    
+    // Directly call resolveAttack which handles the state update atomically.
+    // This fixes the race condition where hand update might be overwritten or cause stale state.
     resolveAttack(gameState.pendingAttack, card);
   };
 
@@ -437,11 +509,7 @@ const App: React.FC = () => {
     
     const select = (kind: HeroKind) => {
       audio.playHover();
-      if (!selectedHeroP1) {
-        setSelectedHeroP1(kind);
-      } else {
-        initializeGame(selectedHeroP1, kind);
-      }
+      initializeGame(kind); // Direct start with AI
     };
 
     const mapElement = (kind: HeroKind): Element => {
@@ -461,7 +529,7 @@ const App: React.FC = () => {
         <p className="text-gray-400 mb-10 font-serif text-lg italic tracking-widest">Five Elements Battle</p>
         
         <h2 className="text-2xl text-white mb-8 font-serif border-b-2 border-yellow-600/50 pb-2 px-10">
-          {selectedHeroP1 ? "请选择 第二位 英雄" : "请选择 第一位 英雄"}
+          选择你的英雄 (开始游戏)
         </h2>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-6 max-w-7xl w-full px-4">
@@ -490,7 +558,6 @@ const App: React.FC = () => {
                   onMouseEnter={() => audio.playHover()}
                   className={`group relative bg-slate-900/50 border-2 border-slate-700 ${borderColor} p-6 rounded-2xl text-center transition-all duration-300 hover:-translate-y-3 hover:shadow-[0_0_30px_rgba(0,0,0,0.5)] flex flex-col items-center overflow-hidden backdrop-blur-sm`}
                 >
-                  {/* Background Glow */}
                   <div className={`absolute inset-0 opacity-0 group-hover:opacity-20 transition-opacity bg-gradient-to-t from-current to-transparent ${textColor}`}></div>
                   
                   <div className="relative w-24 h-24 mb-6 rounded-full bg-slate-800 border-4 border-slate-600 shadow-inner flex items-center justify-center group-hover:scale-110 transition-transform duration-300">
@@ -499,9 +566,6 @@ const App: React.FC = () => {
                   
                   <div className={`font-black text-2xl text-slate-200 mb-3 ${textColor} transition-colors tracking-widest`}>
                       {HERO_NAMES[kind]}
-                  </div>
-                  <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-2 border border-slate-700 px-2 py-1 rounded">
-                      {ELEMENT_CN[element]} Attributes
                   </div>
                   <p className="text-gray-400 text-xs leading-relaxed opacity-80 group-hover:opacity-100">
                       {HERO_DESCRIPTIONS[kind].split('：')[1]}
@@ -524,8 +588,10 @@ const App: React.FC = () => {
   const opponentIdx = playerIdx === 0 ? 1 : 0;
   const isReactionPhase = gameState.phase === 'DEFENDER_REACTION';
   
-  const bottomPlayerIdx = isReactionPhase ? opponentIdx : playerIdx;
-  const topPlayerIdx = isReactionPhase ? playerIdx : opponentIdx;
+  const bottomPlayerIdx = 0; 
+  const topPlayerIdx = 1;
+  const topPlayer = gameState.players[topPlayerIdx];
+  const bottomPlayer = gameState.players[bottomPlayerIdx];
 
   return (
     <div className={`min-h-screen bg-slate-900 text-gray-100 flex flex-col md:flex-row overflow-hidden relative transition-colors duration-200 
@@ -534,7 +600,6 @@ const App: React.FC = () => {
         ${screenFlash === 'gold' ? 'animate-flash-gold' : ''}
     `}>
       
-      {/* Audio Control */}
       <button 
         onClick={() => { audio.toggleMute(!isMuted); setIsMuted(!isMuted); }}
         className="absolute top-4 right-4 z-50 bg-slate-800/80 hover:bg-slate-700 text-white p-3 rounded-full border border-slate-600 shadow-lg backdrop-blur"
@@ -543,7 +608,6 @@ const App: React.FC = () => {
           {isMuted ? '🔇' : '🔊'}
       </button>
 
-      {/* Combat Effect Overlay */}
       {effectMessage && (
           <div className="absolute inset-0 flex items-center justify-center z-50 pointer-events-none bg-black/20 backdrop-blur-sm">
               <div className={`font-black ${effectMessage.color} drop-shadow-[0_5px_5px_rgba(0,0,0,0.8)] animate-pop text-center`}>
@@ -562,9 +626,9 @@ const App: React.FC = () => {
               </span>
           </h1>
           <p className="text-sm text-gray-400 mt-2 pl-1 border-l-2 border-yellow-600/30">
-            {isReactionPhase 
-              ? `⚡ 轮到 ${gameState.players[bottomPlayerIdx].name} 防御` 
-              : `🎲 轮到 ${gameState.players[bottomPlayerIdx].name} 行动`}
+            {gameState.players[playerIdx].isAI 
+                ? (isReactionPhase ? `⚡ 电脑正在思考如何防御...` : `🤖 电脑正在思考出牌...`)
+                : (isReactionPhase ? `⚡ 轮到你防御` : `🎲 轮到你行动`)}
           </p>
         </div>
         <GameLog logs={gameState.logs} />
@@ -580,31 +644,37 @@ const App: React.FC = () => {
       {/* Game Board */}
       <div className="flex-1 flex flex-col relative p-2 md:p-6 order-2 md:order-1 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')]">
         
-        {/* TOP AREA */}
+        {/* TOP AREA (Opponent/AI) */}
         <div className="flex-1 flex flex-col items-center justify-start py-4 relative transition-all duration-500">
           <div className="scale-90 opacity-90 hover:opacity-100 transition-all">
             <HeroDisplay 
-                hero={gameState.players[topPlayerIdx]} 
-                isCurrentTurn={false}
+                hero={topPlayer} 
+                isCurrentTurn={playerIdx === topPlayerIdx}
                 isOpponent={true}
             />
           </div>
           
+          {/* Opponent Hands */}
           <div className="flex -space-x-6 mt-6">
-            {gameState.hands[topPlayerIdx].map((_, i) => (
-              <div key={i} className="w-16 h-24 md:w-24 md:h-32 bg-gradient-to-br from-slate-700 to-slate-900 rounded-lg border-2 border-slate-600 shadow-2xl transform hover:-translate-y-2 transition-transform flex items-center justify-center">
-                  <span className="text-3xl opacity-10 select-none">五行</span>
-              </div>
+            {gameState.hands[topPlayerIdx].map((card, i) => (
+               <div key={card.id} className="transform hover:-translate-y-2 transition-transform">
+                   {topPlayer.isAI ? (
+                       <CardBack isSmall={window.innerWidth < 768} />
+                   ) : (
+                       <CardComponent card={card} disabled isSmall={window.innerWidth < 768} />
+                   )}
+               </div>
             ))}
           </div>
         </div>
 
         {/* CENTER ACTIONS */}
         <div className="h-24 md:h-32 flex items-center justify-center z-20">
-           {isReactionPhase && (
+           {/* Player is reacting */}
+           {isReactionPhase && !bottomPlayer.isAI && playerIdx === topPlayerIdx && (
                <div className="text-center animate-pulse bg-red-950/90 p-6 rounded-2xl border-2 border-red-600 shadow-[0_0_30px_rgba(220,38,38,0.4)] backdrop-blur-md">
                    <div className="text-white font-black text-2xl mb-1 tracking-widest">⚠️ 危险警报</div>
-                   <p className="text-sm text-red-200 mb-4">你遭受了攻击！请出牌防御！</p>
+                   <p className="text-sm text-red-200 mb-4">电脑攻击了你！请出牌防御！</p>
                    <button 
                      onClick={() => handleDefenderReaction(null)}
                      className="px-6 py-2 bg-slate-800 hover:bg-red-900 rounded border border-red-500/50 text-red-200 text-sm font-bold shadow transition-colors"
@@ -613,7 +683,9 @@ const App: React.FC = () => {
                    </button>
                </div>
            )}
-           {!isReactionPhase && gameState.phase !== 'GAME_OVER' && (
+           
+           {/* Normal Turn End Button (Only for Human Player) */}
+           {!isReactionPhase && playerIdx === bottomPlayerIdx && gameState.phase !== 'GAME_OVER' && (
              <button 
                onClick={endTurn}
                onMouseEnter={() => audio.playHover()}
@@ -626,6 +698,8 @@ const App: React.FC = () => {
                </span>
              </button>
            )}
+
+           {/* Game Over */}
            {gameState.phase === 'GAME_OVER' && (
                <div className="flex flex-col items-center gap-6 bg-black/60 p-8 rounded-3xl backdrop-blur-sm border border-white/10">
                    <div className="text-5xl font-black text-white drop-shadow-[0_0_10px_rgba(255,255,255,0.5)] tracking-widest">胜负已分</div>
@@ -639,21 +713,36 @@ const App: React.FC = () => {
            )}
         </div>
 
-        {/* BOTTOM AREA */}
+        {/* BOTTOM AREA (Player) */}
         <div className="flex-1 flex flex-col items-center justify-end py-4 relative">
-          {/* Hand */}
           <div className="flex flex-wrap justify-center gap-3 md:gap-4 mb-8 z-10 px-2 perspective-1000">
             {gameState.hands[bottomPlayerIdx].map((card, i) => {
-                const isDefense = card.type === CardType.Defense;
+                // Logic for enabling/disabling cards in UI
                 let disabled = false;
+                
+                // If it's not my turn (or I'm defending and it's reaction phase)
+                const isMyTurn = playerIdx === bottomPlayerIdx;
+                
                 if (isReactionPhase) {
-                    disabled = !isDefense;
+                    // If I am defending (I am P0, P1 is attacking/current)
+                    if (playerIdx !== bottomPlayerIdx) {
+                        if (card.type !== CardType.Defense) disabled = true;
+                    } else {
+                        // I am attacking, can't play cards while waiting
+                        disabled = true;
+                    }
                 } else {
-                    if (gameState.phase !== 'PLAYER_TURN') disabled = true;
+                    // Normal Phase
+                    if (!isMyTurn) disabled = true;
                     if (card.type === CardType.Attack && gameState.hasAttackedThisTurn) disabled = true;
+                    // Rule: Cannot heal at max HP
+                    if (card.type === CardType.Heal && bottomPlayer.hp >= bottomPlayer.maxHp) disabled = true;
+                    // Rule: Cannot stack shields
+                    if (card.type === CardType.Defense && bottomPlayer.persistentShield) disabled = true;
                 }
 
-                const opacityClass = disabled ? 'opacity-40 grayscale scale-95 pointer-events-none' : 'hover:z-20';
+                // Updated class for visibility: just opacity-60, no grayscale
+                const opacityClass = disabled ? 'opacity-60 scale-95 pointer-events-none' : 'hover:z-20';
                 
                 return (
                     <div key={card.id} className={`transition-all duration-300 ${opacityClass}`}>
@@ -673,8 +762,8 @@ const App: React.FC = () => {
           </div>
 
           <HeroDisplay 
-            hero={gameState.players[bottomPlayerIdx]} 
-            isCurrentTurn={gameState.currentPlayerIndex === bottomPlayerIdx}
+            hero={bottomPlayer} 
+            isCurrentTurn={playerIdx === bottomPlayerIdx}
             isOpponent={false}
           />
         </div>

@@ -1,9 +1,9 @@
 
-// Web Audio API implementation for procedural sound generation
+// Web Audio API implementation & HTML5 Audio for BGM
 export class AudioService {
     private ctx: AudioContext | null = null;
     private masterGain: GainNode | null = null;
-    private bgmInterval: number | null = null;
+    private bgmAudio: HTMLAudioElement | null = null;
     private isMuted: boolean = false;
 
     constructor() {
@@ -18,6 +18,13 @@ export class AudioService {
             this.masterGain = this.ctx.createGain();
             this.masterGain.gain.value = 0.3; 
             this.masterGain.connect(this.ctx.destination);
+
+            // Setup HTML5 Audio for BGM
+            // Epic Action / Drum & Bass style
+            this.bgmAudio = new Audio('https://cdn.pixabay.com/audio/2023/09/28/audio_270885b9a0.mp3'); 
+            this.bgmAudio.loop = true;
+            this.bgmAudio.volume = 0.4;
+            
         } catch (e) {
             console.error("Web Audio API not supported");
         }
@@ -28,31 +35,81 @@ export class AudioService {
         if (this.ctx && this.masterGain) {
             this.masterGain.gain.setTargetAtTime(mute ? 0 : 0.3, this.ctx.currentTime, 0.1);
         }
-        if (mute) this.stopBGM();
-        else this.startBGM();
+        if (this.bgmAudio) {
+            if (mute) this.bgmAudio.pause();
+            else this.bgmAudio.play().catch(() => {});
+        }
     }
 
-    // Procedural Sound Effects
+    startBGM() {
+        if (this.isMuted || !this.bgmAudio) return;
+        this.bgmAudio.play().catch(e => console.log("Audio play blocked until interaction"));
+    }
+
+    stopBGM() {
+        if (this.bgmAudio) {
+            this.bgmAudio.pause();
+            this.bgmAudio.currentTime = 0;
+        }
+    }
+
+    // --- Procedural Sound Effects ---
 
     playHover() {
         if (this.isMuted || !this.ctx || !this.masterGain) return;
+        const t = this.ctx.currentTime;
         const osc = this.ctx.createOscillator();
         const gain = this.ctx.createGain();
+        
         osc.type = 'sine';
-        osc.frequency.setValueAtTime(400, this.ctx.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(600, this.ctx.currentTime + 0.05);
-        gain.gain.setValueAtTime(0.05, this.ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.05);
+        osc.frequency.setValueAtTime(400, t);
+        osc.frequency.exponentialRampToValueAtTime(600, t + 0.05);
+        
+        gain.gain.setValueAtTime(0.05, t);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.05);
         
         osc.connect(gain);
         gain.connect(this.masterGain);
-        osc.start();
-        osc.stop(this.ctx.currentTime + 0.05);
+        osc.start(t);
+        osc.stop(t + 0.05);
     }
 
     playDrawCard() {
         if (this.isMuted || !this.ctx || !this.masterGain) return;
-        const bufferSize = this.ctx.sampleRate * 0.1;
+        const t = this.ctx.currentTime;
+        
+        // Paper-like noise slide
+        const bufferSize = this.ctx.sampleRate * 0.15;
+        const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) {
+            data[i] = (Math.random() * 2 - 1) * 0.5;
+        }
+        
+        const noise = this.ctx.createBufferSource();
+        noise.buffer = buffer;
+        
+        const filter = this.ctx.createBiquadFilter();
+        filter.type = 'bandpass';
+        filter.frequency.setValueAtTime(400, t);
+        filter.frequency.linearRampToValueAtTime(1200, t + 0.1);
+        
+        const gain = this.ctx.createGain();
+        gain.gain.setValueAtTime(0.4, t);
+        gain.gain.linearRampToValueAtTime(0, t + 0.15);
+
+        noise.connect(filter);
+        filter.connect(gain);
+        gain.connect(this.masterGain);
+        noise.start(t);
+    }
+
+    playAttack() {
+        if (this.isMuted || !this.ctx || !this.masterGain) return;
+        const t = this.ctx.currentTime;
+
+        // 1. Whoosh (Noise)
+        const bufferSize = this.ctx.sampleRate * 0.2;
         const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
         const data = buffer.getChannelData(0);
         for (let i = 0; i < bufferSize; i++) {
@@ -60,186 +117,118 @@ export class AudioService {
         }
         const noise = this.ctx.createBufferSource();
         noise.buffer = buffer;
-        const filter = this.ctx.createBiquadFilter();
-        filter.type = 'lowpass';
-        filter.frequency.value = 1200;
-        const gain = this.ctx.createGain();
-        gain.gain.setValueAtTime(0.3, this.ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.1);
+        
+        const noiseFilter = this.ctx.createBiquadFilter();
+        noiseFilter.type = 'lowpass';
+        noiseFilter.frequency.setValueAtTime(800, t);
+        noiseFilter.frequency.exponentialRampToValueAtTime(100, t + 0.2);
 
-        noise.connect(filter);
-        filter.connect(gain);
-        gain.connect(this.masterGain);
-        noise.start();
-    }
+        const noiseGain = this.ctx.createGain();
+        noiseGain.gain.setValueAtTime(0.6, t);
+        noiseGain.gain.exponentialRampToValueAtTime(0.01, t + 0.2);
+        
+        noise.connect(noiseFilter);
+        noiseFilter.connect(noiseGain);
+        noiseGain.connect(this.masterGain);
+        noise.start(t);
 
-    playAttack() {
-        if (this.isMuted || !this.ctx || !this.masterGain) return;
-        // Sharp metallic sound
+        // 2. Impact Punch (Oscillator)
         const osc = this.ctx.createOscillator();
-        const gain = this.ctx.createGain();
-        osc.type = 'sawtooth';
-        osc.frequency.setValueAtTime(300, this.ctx.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(50, this.ctx.currentTime + 0.2);
-        gain.gain.setValueAtTime(0.4, this.ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.2);
-
-        const filter = this.ctx.createBiquadFilter();
-        filter.type = 'highpass';
-        filter.frequency.value = 500;
-
-        osc.connect(filter);
-        filter.connect(gain);
-        gain.connect(this.masterGain);
-        osc.start();
-        osc.stop(this.ctx.currentTime + 0.2);
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(150, t);
+        osc.frequency.exponentialRampToValueAtTime(40, t + 0.15);
+        
+        const oscGain = this.ctx.createGain();
+        oscGain.gain.setValueAtTime(0.4, t);
+        oscGain.gain.exponentialRampToValueAtTime(0.01, t + 0.15);
+        
+        osc.connect(oscGain);
+        oscGain.connect(this.masterGain);
+        osc.start(t);
+        osc.stop(t + 0.2);
     }
 
     playDefense() {
         if (this.isMuted || !this.ctx || !this.masterGain) return;
-        // Dull thud
-        const osc = this.ctx.createOscillator();
-        const gain = this.ctx.createGain();
-        osc.type = 'square';
-        osc.frequency.setValueAtTime(80, this.ctx.currentTime);
-        osc.frequency.linearRampToValueAtTime(40, this.ctx.currentTime + 0.15);
-        gain.gain.setValueAtTime(0.4, this.ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.15);
+        const t = this.ctx.currentTime;
 
-        // Lowpass to muffle it
-        const filter = this.ctx.createBiquadFilter();
-        filter.type = 'lowpass';
-        filter.frequency.value = 300;
-
-        osc.connect(filter);
-        filter.connect(gain);
-        gain.connect(this.masterGain);
-        osc.start();
-        osc.stop(this.ctx.currentTime + 0.15);
+        // Metallic Clang (Dissonant Sines)
+        const freqs = [200, 300, 540, 800];
+        freqs.forEach((f, i) => {
+            const osc = this.ctx!.createOscillator();
+            const gain = this.ctx!.createGain();
+            
+            osc.type = i % 2 === 0 ? 'square' : 'triangle';
+            osc.frequency.setValueAtTime(f, t);
+            
+            // Fast attack, long decay
+            gain.gain.setValueAtTime(0, t);
+            gain.gain.linearRampToValueAtTime(0.15, t + 0.02);
+            gain.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
+            
+            osc.connect(gain);
+            gain.connect(this.masterGain!);
+            osc.start(t);
+            osc.stop(t + 0.5);
+        });
     }
 
     playHeal() {
         if (this.isMuted || !this.ctx || !this.masterGain) return;
-        // Rising glimmer
-        const osc = this.ctx.createOscillator();
-        const gain = this.ctx.createGain();
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(440, this.ctx.currentTime);
-        osc.frequency.linearRampToValueAtTime(880, this.ctx.currentTime + 0.6);
-        gain.gain.setValueAtTime(0.2, this.ctx.currentTime);
-        gain.gain.linearRampToValueAtTime(0, this.ctx.currentTime + 0.6);
+        const t = this.ctx.currentTime;
 
-        osc.connect(gain);
-        gain.connect(this.masterGain);
-        osc.start();
-        osc.stop(this.ctx.currentTime + 0.6);
+        // Magical Arpeggio
+        const notes = [440, 554, 659, 880]; // A major
+        notes.forEach((freq, i) => {
+            const osc = this.ctx!.createOscillator();
+            const gain = this.ctx!.createGain();
+            
+            osc.type = 'sine';
+            osc.frequency.value = freq;
+            
+            const startTime = t + i * 0.08;
+            gain.gain.setValueAtTime(0, startTime);
+            gain.gain.linearRampToValueAtTime(0.1, startTime + 0.05);
+            gain.gain.exponentialRampToValueAtTime(0.001, startTime + 0.8);
+            
+            osc.connect(gain);
+            gain.connect(this.masterGain!);
+            osc.start(startTime);
+            osc.stop(startTime + 0.8);
+        });
     }
 
     playImpact(isCritical: boolean) {
         if (this.isMuted || !this.ctx || !this.masterGain) return;
+        const t = this.ctx.currentTime;
         
         const osc = this.ctx.createOscillator();
         const gain = this.ctx.createGain();
-        osc.type = isCritical ? 'sawtooth' : 'triangle';
-        osc.frequency.setValueAtTime(150, this.ctx.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(20, this.ctx.currentTime + 0.3);
         
-        gain.gain.setValueAtTime(0.8, this.ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.3);
+        osc.type = isCritical ? 'sawtooth' : 'triangle';
+        // Deep impact or sharp crack
+        osc.frequency.setValueAtTime(isCritical ? 200 : 100, t);
+        osc.frequency.exponentialRampToValueAtTime(30, t + 0.4);
+        
+        gain.gain.setValueAtTime(isCritical ? 0.8 : 0.6, t);
+        gain.gain.exponentialRampToValueAtTime(0.01, t + 0.4);
 
-        osc.connect(gain);
+        // Lowpass filter for body
+        const filter = this.ctx.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(isCritical ? 3000 : 500, t);
+        filter.frequency.exponentialRampToValueAtTime(100, t + 0.3);
+
+        osc.connect(filter);
+        filter.connect(gain);
         gain.connect(this.masterGain);
-        osc.start();
-        osc.stop(this.ctx.currentTime + 0.3);
+        osc.start(t);
+        osc.stop(t + 0.4);
     }
 
     playBuff() {
         if (this.isMuted || !this.ctx || !this.masterGain) return;
-        const now = this.ctx.currentTime;
-        // Major triad arpeggio
-        [523.25, 659.25, 783.99].forEach((freq, i) => {
-            const osc = this.ctx!.createOscillator();
-            const gain = this.ctx!.createGain();
-            osc.type = 'triangle';
-            osc.frequency.value = freq;
-            gain.gain.setValueAtTime(0.1, now + i * 0.1);
-            gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.1 + 0.4);
-            osc.connect(gain);
-            gain.connect(this.masterGain!);
-            osc.start(now + i * 0.1);
-            osc.stop(now + i * 0.1 + 0.4);
-        });
-    }
-
-    // --- BGM Logic: Pentatonic Generator ---
-    
-    private playMelodyNote(freq: number, duration: number) {
-        if (this.isMuted || !this.ctx || !this.masterGain) return;
-        
-        const t = this.ctx.currentTime;
-        const osc = this.ctx.createOscillator();
-        const gain = this.ctx.createGain();
-        
-        // Plucked string synthesis: Sawtooth + Lowpass Filter Envelope
-        osc.type = 'sawtooth';
-        osc.frequency.value = freq;
-        
-        // Amplitude Envelope
-        gain.gain.setValueAtTime(0, t);
-        gain.gain.linearRampToValueAtTime(0.15, t + 0.02); // Fast attack
-        gain.gain.exponentialRampToValueAtTime(0.001, t + duration); // Long decay
-        
-        // Filter Envelope for "pluck" character
-        const filter = this.ctx.createBiquadFilter();
-        filter.type = 'lowpass';
-        filter.frequency.setValueAtTime(800, t);
-        filter.frequency.exponentialRampToValueAtTime(100, t + duration * 0.8);
-        
-        osc.connect(filter);
-        filter.connect(gain);
-        gain.connect(this.masterGain);
-        
-        osc.start(t);
-        osc.stop(t + duration);
-    }
-
-    startBGM() {
-        if (this.isMuted || !this.ctx || this.bgmInterval) return;
-
-        // Pentatonic Scale (C Major Pentatonic roughly): C4, D4, E4, G4, A4
-        // Frequencies: C4=261.6, D4=293.7, E4=329.6, G4=392.0, A4=440.0
-        const scale = [196.00, 220.00, 261.63, 293.66, 329.63, 392.00, 440.00]; // G3 to A4
-        
-        const playNext = () => {
-            if (this.isMuted) return;
-            
-            // Pick a random note from scale
-            const noteIndex = Math.floor(Math.random() * scale.length);
-            const freq = scale[noteIndex];
-            const duration = 1.5 + Math.random(); // 1.5 to 2.5 seconds
-            
-            this.playMelodyNote(freq, duration);
-            
-            // Sometimes play a harmony note
-            if (Math.random() > 0.7) {
-                const harmonyIndex = (noteIndex + 2) % scale.length;
-                this.playMelodyNote(scale[harmonyIndex] / 2, duration + 1); // Lower octave
-            }
-        };
-
-        playNext(); // Play immediately
-        
-        // Schedule loop (slow, contemplative pace)
-        this.bgmInterval = window.setInterval(() => {
-            playNext();
-        }, 2500); // Every 2.5 seconds
-    }
-
-    stopBGM() {
-        if (this.bgmInterval) {
-            window.clearInterval(this.bgmInterval);
-            this.bgmInterval = null;
-        }
+        this.playHeal(); // Reuse heal sound for now as it fits "Generate"
     }
 }
 
