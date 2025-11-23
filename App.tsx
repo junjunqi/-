@@ -55,6 +55,11 @@ const App: React.FC = () => {
   // New: Interaction Link HUD State
   const [interactionTip, setInteractionTip] = useState<{ source: Element, target: Element, type: 'GENERATE' | 'OVERCOME' } | null>(null);
 
+  // Preload BGM early to reduce first-play delay
+  useEffect(() => {
+      if (audio.preloadBGM) audio.preloadBGM();
+  }, []);
+
   // AI Timer Ref
   const aiTimeoutRef = useRef<number | null>(null);
 

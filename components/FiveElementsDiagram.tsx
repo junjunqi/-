@@ -11,9 +11,9 @@ interface FiveElementsDiagramProps {
 }
 
 const FiveElementsDiagram: React.FC<FiveElementsDiagramProps> = ({ activeLink }) => {
-  // Layout: Clockwise from Top
-  // Fire (Top), Earth (Right-Top), Metal (Right-Bottom), Water (Left-Bottom), Wood (Left-Top)
-  const elements = [Element.Fire, Element.Earth, Element.Metal, Element.Water, Element.Wood];
+  // Layout (clockwise, starting at top): Wood -> Fire -> Earth -> Metal -> Water
+  // This matches常见五行示意图，便于识别生克方向
+  const elements = [Element.Wood, Element.Fire, Element.Earth, Element.Metal, Element.Water];
   
   // Coordinates on a 100x100 grid
   const radius = 35;
@@ -29,51 +29,52 @@ const FiveElementsDiagram: React.FC<FiveElementsDiagramProps> = ({ activeLink })
 
   const coords = elements.map((_, i) => getCoord(i));
 
-  const renderArrow = (start: {x: number, y: number}, end: {x: number, y: number}, isActive: boolean, isCurve: boolean) => {
-    // 1. Calculate Trim to avoid overlapping circle nodes
+  const renderArrow = (
+    start: {x: number, y: number}, 
+    end: {x: number, y: number}, 
+    isActive: boolean, 
+    isGenerate: boolean
+  ) => {
+    // Trim line so arrow heads don't overlap nodes
     const dx = end.x - start.x;
     const dy = end.y - start.y;
     const dist = Math.sqrt(dx*dx + dy*dy);
-    const offset = 12; // Circle radius + gap
+    const offset = 11; 
     
     const sx = start.x + dx * (offset/dist);
     const sy = start.y + dy * (offset/dist);
     const ex = end.x - dx * (offset/dist);
     const ey = end.y - dy * (offset/dist);
 
-    // 2. Define Style & Color
-    // Gen (Curve): Lime Green (Life), Over (Straight): Rose Red (Impact)
-    const color = isCurve ? '#84cc16' : '#be123c'; 
-    
-    // Make overcoming lines thicker and more visible by default
-    const strokeWidth = isActive ? 3 : (isCurve ? 2 : 2);
-    const opacity = isActive ? 1 : (isCurve ? 0.6 : 0.6); 
+    // Colors & weights
+    const color = isGenerate ? '#84cc16' : '#f87171'; 
+    const baseOpacity = isGenerate ? 0.75 : 0.4; // 克线更清晰
+    const strokeWidth = isActive ? 3.2 : (isGenerate ? 2 : 2);
+    const opacity = isActive ? 1 : baseOpacity; 
     
     const id = `arrow-${Math.random().toString(36).substr(2, 9)}`;
 
     let pathD = ``;
 
-    if (isCurve) {
-        // GENERATION: Smooth Curve (Outer Circle)
+    if (isGenerate) {
+        // 生：外圈柔和曲线
         const mx = (sx + ex) / 2;
         const my = (sy + ey) / 2;
-        const vcx = mx - 50;
-        const vcy = my - 50;
-        const factor = 1.3; 
-        pathD = `M ${sx} ${sy} Q ${50 + vcx*factor} ${50 + vcy*factor} ${ex} ${ey}`;
+        const vcx = mx - center.x;
+        const vcy = my - center.y;
+        const factor = 1.28; 
+        pathD = `M ${sx} ${sy} Q ${center.x + vcx*factor} ${center.y + vcy*factor} ${ex} ${ey}`;
     } else {
-        // OVERCOMING: Straight Line (Inner Star)
+        // 克：标准五芒星直线，保持示意图形状
         pathD = `M ${sx} ${sy} L ${ex} ${ey}`;
     }
 
-    // Marker Config
-    // Curve (Generation): Small, subtle arrow
-    // Straight (Overcoming): Large, sharp, aggressive arrow
-    const mWidth = isCurve ? 4 : 10;
-    const mHeight = isCurve ? 4 : 8;
-    const mRefX = isCurve ? 3.5 : 9; // Adjust refX to align tip with line end
-    const mRefY = isCurve ? 2 : 4;   // Center Y
-    const mPoints = isCurve ? "0 0, 4 2, 0 4" : "0 0, 10 4, 0 8";
+    // Marker
+    const mWidth = isGenerate ? 4 : 7;
+    const mHeight = isGenerate ? 4 : 6;
+    const mRefX = isGenerate ? 3.5 : 6; 
+    const mRefY = isGenerate ? 2 : 3;   
+    const mPoints = isGenerate ? "0 0, 4 2, 0 4" : "0 0, 7 3, 0 6";
 
     return (
       <g key={id} className="transition-all duration-500">
@@ -89,9 +90,10 @@ const FiveElementsDiagram: React.FC<FiveElementsDiagramProps> = ({ activeLink })
             fill="none" 
             markerEnd={`url(#${id})`} 
             opacity={opacity}
-            strokeLinecap={isCurve ? "round" : "butt"}
-            className={isActive ? (isCurve ? "animate-pulse" : "animate-shake") : ""}
-            filter={isActive ? "drop-shadow(0 0 3px currentColor)" : ""}
+            strokeLinecap="round"
+            className={isActive ? "animate-pop" : ""}
+            filter={isActive ? "drop-shadow(0 0 4px currentColor)" : ""}
+            strokeDasharray={isGenerate ? undefined : undefined} 
         />
       </g>
     );
@@ -109,7 +111,7 @@ const FiveElementsDiagram: React.FC<FiveElementsDiagramProps> = ({ activeLink })
         {renderArrow(coords[2], coords[3], isLinkActive(Element.Metal, Element.Water), true)}
         {renderArrow(coords[3], coords[4], isLinkActive(Element.Water, Element.Wood), true)}
 
-        {/* OVERCOMING STAR (Inner - Straight - Rose Red) */}
+        {/* OVERCOMING STAR (Inner - Curved, subtle) */}
         {renderArrow(coords[4], coords[1], isLinkActive(Element.Wood, Element.Earth), false)}
         {renderArrow(coords[1], coords[3], isLinkActive(Element.Earth, Element.Water), false)}
         {renderArrow(coords[3], coords[0], isLinkActive(Element.Water, Element.Fire), false)}
