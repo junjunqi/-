@@ -5,7 +5,7 @@ import {
 } from './types';
 import { 
   INITIAL_HAND_SIZE, HERO_STARTING_HP, HERO_DESCRIPTIONS, HERO_NAMES,
-  createBaseDeck, ELEMENT_CN
+  createBaseDeck, ELEMENT_CN, ELEMENT_TEXT_COLORS, FiveElementRules, ELEMENT_COLORS
 } from './constants';
 import * as Logic from './services/gameLogic';
 import * as AIStrategy from './services/aiStrategy';
@@ -14,6 +14,7 @@ import CardComponent, { CardBack } from './components/Card';
 import HeroDisplay from './components/HeroDisplay';
 import GameLog from './components/GameLog';
 import ElementAvatar from './components/ElementAvatar';
+import FiveElementsDiagram from './components/FiveElementsDiagram';
 
 // Initial Dummy State
 const initialHeroState = (id: number, kind: HeroKind, element: Element, name: string, isAI: boolean = false): Hero => ({
@@ -51,6 +52,9 @@ const App: React.FC = () => {
   const [screenFlash, setScreenFlash] = useState<'red' | 'gold' | null>(null);
   const [isMuted, setIsMuted] = useState(false);
   
+  // New: Interaction Link HUD State
+  const [interactionTip, setInteractionTip] = useState<{ source: Element, target: Element, type: 'GENERATE' | 'OVERCOME' } | null>(null);
+
   // AI Timer Ref
   const aiTimeoutRef = useRef<number | null>(null);
 
@@ -120,9 +124,18 @@ const App: React.FC = () => {
     setGameState(prev => ({ ...prev, logs: [...prev.logs, msg] }));
   };
 
-  const triggerVisuals = (effect: Logic.CalculationResult['effect']) => {
+  const triggerVisuals = (effect: Logic.CalculationResult['effect'], sourceEl?: Element, targetEl?: Element) => {
       let msg = null;
       
+      // Set Link HUD
+      if (sourceEl && targetEl) {
+          if (effect === 'GENERATE') setInteractionTip({ source: sourceEl, target: targetEl, type: 'GENERATE' });
+          if (effect === 'OVERCOME') setInteractionTip({ source: sourceEl, target: targetEl, type: 'OVERCOME' });
+          if (effect === 'WEAK') setInteractionTip({ source: sourceEl, target: targetEl, type: 'OVERCOME' }); // Weak is just reverse overcome
+          
+          setTimeout(() => setInteractionTip(null), 2500);
+      }
+
       if (effect === 'GENERATE') {
           msg = { text: '🔥 五行相生！效果翻倍！', color: 'text-green-400', size: 'text-5xl' };
           setScreenFlash('gold');
@@ -294,15 +307,16 @@ const App: React.FC = () => {
     if (card.type === CardType.Attack) {
       audio.playAttack();
 
-      const { damage, log, effect } = Logic.calculateAttackDamage(currentPlayer, card);
-      triggerVisuals(effect);
+      const { damage, log, effect, ignoreShield } = Logic.calculateAttackDamage(currentPlayer, card);
+      triggerVisuals(effect, currentPlayer.element, card.element);
 
       const hasDefenseCards = opponentHand.some(c => c.type === CardType.Defense);
       
       const attackState = {
         attackerIndex: gameState.currentPlayerIndex,
         card: card,
-        initialDamage: damage
+        initialDamage: damage,
+        ignoreShield: ignoreShield
       };
 
       const newHands = consumeCard();
@@ -323,7 +337,7 @@ const App: React.FC = () => {
     } else if (card.type === CardType.Defense) {
        audio.playDefense();
        const { value, log, effect } = Logic.calculateDefenseValue(currentPlayer, card);
-       triggerVisuals(effect);
+       triggerVisuals(effect, currentPlayer.element, card.element);
 
        const newHands = consumeCard();
        
@@ -343,7 +357,7 @@ const App: React.FC = () => {
     } else if (card.type === CardType.Heal) {
       audio.playHeal();
       const { value, log, effect } = Logic.calculateHealValue(currentPlayer, card);
-      triggerVisuals(effect);
+      triggerVisuals(effect, currentPlayer.element, card.element);
 
       const newHands = consumeCard();
       
@@ -377,7 +391,6 @@ const App: React.FC = () => {
       const discard = [...prev.discard];
 
       // Atomically update hands if defense card was used
-      // This prevents race conditions where separate setGameState calls might conflict
       const hands = [...prev.hands];
       if (defenseCard) {
           hands[defenderIdx] = hands[defenderIdx].filter(c => c.id !== defenseCard.id);
@@ -385,23 +398,32 @@ const App: React.FC = () => {
 
       let currentDamage = attack.initialDamage;
 
-      // 1. Persistent Shield
+      // 1. Persistent Shield Check
+      // Only check shield if NOT ignored
       if (defender.persistentShield && currentDamage > 0) {
-        logs.push(`${defender.name} 的护盾触发！`);
-        const { finalValue: blocked, log, effect } = Logic.calculateElementInteraction(
-          defender.persistentShield.value, 
-          defender.persistentShield.element, 
-          attack.card.element
-        );
-        if(effect !== 'NONE') triggerVisuals(effect);
-        else audio.playImpact(false);
+        if (attack.ignoreShield) {
+            logs.push(`⚡ 【穿透】攻击无视了 ${defender.name} 的持久护盾！`);
+        } else {
+            logs.push(`${defender.name} 的护盾触发！`);
+            const { finalValue: blocked, log, effect } = Logic.calculateElementInteraction(
+            defender.persistentShield.value, 
+            defender.persistentShield.element, 
+            attack.card.element
+            );
+            if(effect !== 'NONE') {
+                if (effect === 'OVERCOME') triggerVisuals('OVERCOME', defender.persistentShield.element, attack.card.element);
+                if (effect === 'WEAK') triggerVisuals('OVERCOME', attack.card.element, defender.persistentShield.element);
+            } else {
+                audio.playImpact(false);
+            }
 
-        logs.push(...log);
-        logs.push(`护盾抵消了 ${blocked} 点伤害。`);
-        currentDamage = Math.max(0, currentDamage - blocked);
+            logs.push(...log);
+            logs.push(`护盾抵消了 ${blocked} 点伤害。`);
+            currentDamage = Math.max(0, currentDamage - blocked);
 
-        discard.push(defender.persistentShield.sourceCard);
-        defender.persistentShield = null;
+            discard.push(defender.persistentShield.sourceCard);
+            defender.persistentShield = null;
+        }
       }
 
       // 2. Defense Card
@@ -410,8 +432,13 @@ const App: React.FC = () => {
         const { finalValue: defFinal, log: interactionLog, effect } = Logic.calculateElementInteraction(
           defBase, defenseCard.element, attack.card.element
         );
-        if(effect !== 'NONE') triggerVisuals(effect);
-        else audio.playDefense();
+        
+        if(effect !== 'NONE') {
+             if (effect === 'OVERCOME') triggerVisuals('OVERCOME', defenseCard.element, attack.card.element);
+             if (effect === 'WEAK') triggerVisuals('OVERCOME', attack.card.element, defenseCard.element);
+        } else {
+             audio.playDefense();
+        }
 
         logs.push(...interactionLog);
         
@@ -429,13 +456,14 @@ const App: React.FC = () => {
       if (damageToDefender > 0) {
         if (defender.kind === HeroKind.MetalHero) {
           defender.hasMetalAttackBuff = true;
-          logs.push(`${defender.name} (金) 被击中！下次攻击伤害 +1。`);
+          logs.push(`${defender.name} (金) 被击中！下次攻击伤害翻倍且无视护盾。`);
         }
 
         const { finalDamage, log: elLog, effect } = Logic.calculateCardVsHeroDamage(damageToDefender, attack.card.element, defender.element);
         damageToDefender = finalDamage;
         
-        if(effect === 'OVERCOME') triggerVisuals('OVERCOME'); 
+        if(effect === 'OVERCOME') triggerVisuals('OVERCOME', attack.card.element, defender.element); 
+        else if (effect === 'WEAK') triggerVisuals('WEAK', defender.element, attack.card.element);
         else audio.playImpact(false);
         
         logs.push(...elLog);
@@ -496,9 +524,6 @@ const App: React.FC = () => {
 
   const handleDefenderReaction = (card: Card | null) => {
     if (!gameState.pendingAttack) return;
-    
-    // Directly call resolveAttack which handles the state update atomically.
-    // This fixes the race condition where hand update might be overwritten or cause stale state.
     resolveAttack(gameState.pendingAttack, card);
   };
 
@@ -608,9 +633,38 @@ const App: React.FC = () => {
           {isMuted ? '🔇' : '🔊'}
       </button>
 
+      {/* Interaction Link HUD (Top Left) */}
+      {interactionTip && (
+          <div className="absolute top-20 left-4 z-50 bg-slate-900/90 border border-yellow-500/30 p-4 rounded-xl shadow-2xl flex items-center gap-4 animate-pop pointer-events-none backdrop-blur-md">
+             <div className="flex flex-col items-center">
+                <div className="w-12 h-12 rounded-full bg-slate-800 border border-slate-600 p-2">
+                    <ElementAvatar element={interactionTip.source} className="w-full h-full" />
+                </div>
+                <div className={`text-xs mt-1 font-bold ${ELEMENT_TEXT_COLORS[interactionTip.source]}`}>{ELEMENT_CN[interactionTip.source]}</div>
+             </div>
+             
+             <div className="flex flex-col items-center text-yellow-500 font-bold px-2">
+                 <div className="text-2xl animate-pulse">
+                    {interactionTip.type === 'GENERATE' ? '▶ 生 ▶' : '⚔️ 克 ⚔️'}
+                 </div>
+                 <div className="text-[10px] uppercase tracking-widest bg-slate-800 px-2 rounded border border-yellow-500/30 mt-1">
+                    {interactionTip.type === 'GENERATE' ? '相生增强' : '相克压制'}
+                 </div>
+             </div>
+             
+             <div className="flex flex-col items-center">
+                <div className="w-12 h-12 rounded-full bg-slate-800 border border-slate-600 p-2">
+                    <ElementAvatar element={interactionTip.target} className="w-full h-full" />
+                </div>
+                <div className={`text-xs mt-1 font-bold ${ELEMENT_TEXT_COLORS[interactionTip.target]}`}>{ELEMENT_CN[interactionTip.target]}</div>
+             </div>
+        </div>
+      )}
+
+      {/* Visual Text Overlay - Positioned at top 20% to avoid blocking center board */}
       {effectMessage && (
-          <div className="absolute inset-0 flex items-center justify-center z-50 pointer-events-none bg-black/20 backdrop-blur-sm">
-              <div className={`font-black ${effectMessage.color} drop-shadow-[0_5px_5px_rgba(0,0,0,0.8)] animate-pop text-center`}>
+          <div className="absolute top-[20%] inset-x-0 flex justify-center z-50 pointer-events-none">
+              <div className={`font-black ${effectMessage.color} drop-shadow-[0_2px_10px_rgba(0,0,0,0.8)] animate-pop text-center`}>
                   <div className={`${effectMessage.size || 'text-5xl'}`}>{effectMessage.text}</div>
               </div>
           </div>
@@ -632,11 +686,18 @@ const App: React.FC = () => {
           </p>
         </div>
         <GameLog logs={gameState.logs} />
-        <div className="mt-auto pt-6 hidden md:block opacity-60 hover:opacity-100 transition-opacity">
-             <h3 className="text-xs uppercase text-yellow-600 font-bold mb-3 tracking-wider">五行生克表</h3>
-             <div className="text-[10px] text-gray-400 space-y-2 font-mono bg-slate-900 p-3 rounded border border-slate-800">
-                 <div className="flex items-center"><span className="text-green-500 mr-2">● 相生 (x2)</span> 木→火→土→金→水→木</div>
-                 <div className="flex items-center"><span className="text-red-500 mr-2">● 相克 (x2)</span> 木→土→水→火→金→木</div>
+        
+        {/* Five Elements Diagram */}
+        <div className="mt-auto pt-6 hidden md:flex flex-col items-center opacity-80 hover:opacity-100 transition-opacity">
+             <h3 className="text-xs uppercase text-yellow-600 font-bold mb-2 tracking-wider">五行阵法图</h3>
+             <div className="bg-slate-900/50 p-4 rounded-xl border border-slate-800 shadow-inner w-full flex justify-center">
+                 <FiveElementsDiagram 
+                    activeLink={interactionTip ? { 
+                        source: interactionTip.source, 
+                        target: interactionTip.target, 
+                        type: interactionTip.type 
+                    } : undefined} 
+                 />
              </div>
         </div>
       </div>
@@ -646,7 +707,7 @@ const App: React.FC = () => {
         
         {/* TOP AREA (Opponent/AI) */}
         <div className="flex-1 flex flex-col items-center justify-start py-4 relative transition-all duration-500">
-          <div className="scale-90 opacity-90 hover:opacity-100 transition-all">
+          <div className="scale-90 opacity-90 hover:opacity-100 transition-all relative z-20">
             <HeroDisplay 
                 hero={topPlayer} 
                 isCurrentTurn={playerIdx === topPlayerIdx}
@@ -654,8 +715,8 @@ const App: React.FC = () => {
             />
           </div>
           
-          {/* Opponent Hands */}
-          <div className="flex -space-x-6 mt-6">
+          {/* Opponent Hands - Z-Index 10 to be below Hero Tooltip */}
+          <div className="flex -space-x-6 mt-6 relative z-10">
             {gameState.hands[topPlayerIdx].map((card, i) => (
                <div key={card.id} className="transform hover:-translate-y-2 transition-transform">
                    {topPlayer.isAI ? (
@@ -669,18 +730,90 @@ const App: React.FC = () => {
         </div>
 
         {/* CENTER ACTIONS */}
-        <div className="h-24 md:h-32 flex items-center justify-center z-20">
-           {/* Player is reacting */}
-           {isReactionPhase && !bottomPlayer.isAI && playerIdx === topPlayerIdx && (
-               <div className="text-center animate-pulse bg-red-950/90 p-6 rounded-2xl border-2 border-red-600 shadow-[0_0_30px_rgba(220,38,38,0.4)] backdrop-blur-md">
-                   <div className="text-white font-black text-2xl mb-1 tracking-widest">⚠️ 危险警报</div>
-                   <p className="text-sm text-red-200 mb-4">电脑攻击了你！请出牌防御！</p>
-                   <button 
-                     onClick={() => handleDefenderReaction(null)}
-                     className="px-6 py-2 bg-slate-800 hover:bg-red-900 rounded border border-red-500/50 text-red-200 text-sm font-bold shadow transition-colors"
-                   >
-                     放弃抵抗 (承伤)
-                   </button>
+        <div className="h-24 md:h-32 flex items-center justify-center z-30 relative">
+           {/* Player is reacting - NEW DEFENDER ALERT UI */}
+           {isReactionPhase && !bottomPlayer.isAI && playerIdx === topPlayerIdx && gameState.pendingAttack && (
+               /* Using fixed center positioning but without backdrop to avoid blocking card clicks */
+               <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 animate-in zoom-in-95 duration-200 pointer-events-none">
+                   <div className="bg-slate-900 border-2 border-red-600 rounded-2xl shadow-2xl max-w-xl w-[90vw] md:w-auto overflow-hidden flex flex-col md:flex-row pointer-events-auto">
+                       
+                       {/* Left: Threat Intel */}
+                       <div className="p-4 bg-red-950/30 flex-1 flex flex-col items-center justify-center border-b md:border-b-0 md:border-r border-red-900/50 relative">
+                           <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-red-500 to-transparent"></div>
+                           <h3 className="text-red-400 uppercase tracking-widest font-bold text-[10px] mb-2">⚠️ 敌方攻击判定</h3>
+                           
+                           <div className="flex items-center gap-4">
+                               <div className={`w-16 h-20 rounded-lg border-2 flex flex-col items-center justify-center ${ELEMENT_COLORS[gameState.pendingAttack.card.element]}`}>
+                                   <ElementAvatar element={gameState.pendingAttack.card.element} className="w-8 h-8 mb-1" />
+                                   <div className="font-bold text-xs">{gameState.pendingAttack.card.name}</div>
+                               </div>
+                               <div className="text-center">
+                                    <div className="text-gray-400 text-[10px] uppercase font-bold">伤害</div>
+                                    <div className="text-3xl font-black text-white drop-shadow-md">
+                                      {gameState.pendingAttack.initialDamage}
+                                      {gameState.pendingAttack.ignoreShield && <span className="text-[10px] block text-yellow-500">⚡ 无视护盾</span>}
+                                    </div>
+                               </div>
+                           </div>
+                       </div>
+
+                       {/* Right: Tactical Analysis */}
+                       <div className="p-4 flex-[1.5] bg-slate-900 flex flex-col">
+                           <h3 className="text-yellow-500 uppercase tracking-widest font-bold text-[10px] mb-2 border-b border-gray-700 pb-1">
+                               🛡️ 战术建议
+                           </h3>
+                           
+                           <div className="space-y-2 flex-grow text-xs">
+                               {/* 1. Counter Defense Hint */}
+                               {(() => {
+                                   const attackEl = gameState.pendingAttack.card.element;
+                                   const counterEl = [Element.Wood, Element.Fire, Element.Earth, Element.Metal, Element.Water].find(e => FiveElementRules.overcomes(e, attackEl));
+                                   if (!counterEl) return null;
+                                   
+                                   const hasCounter = gameState.hands[bottomPlayerIdx].some(c => c.type === CardType.Defense && c.element === counterEl);
+
+                                   return (
+                                       <div className={`p-2 rounded border flex items-center gap-2 ${hasCounter ? 'bg-green-900/20 border-green-600/50' : 'bg-gray-800 border-gray-700'}`}>
+                                           <div className="text-lg">✨</div>
+                                           <div>
+                                               <div className={`font-bold ${hasCounter ? 'text-green-400' : 'text-gray-400'}`}>完美防御：{ELEMENT_CN[counterEl]}</div>
+                                               <div className="text-[10px] text-gray-500">防御值翻倍</div>
+                                           </div>
+                                       </div>
+                                   );
+                               })()}
+
+                               {/* 2. Weakness Warning */}
+                               {(() => {
+                                   const attackEl = gameState.pendingAttack.card.element;
+                                   const weakEl = [Element.Wood, Element.Fire, Element.Earth, Element.Metal, Element.Water].find(e => FiveElementRules.overcomes(attackEl, e));
+                                   if (!weakEl) return null;
+
+                                   return (
+                                       <div className="p-2 rounded border bg-red-900/10 border-red-900/30 flex items-center gap-2">
+                                           <div className="text-lg">🚫</div>
+                                           <div>
+                                               <div className="font-bold text-red-400">避免：{ELEMENT_CN[weakEl]}</div>
+                                               <div className="text-[10px] text-gray-500">防御值减半</div>
+                                           </div>
+                                       </div>
+                                   );
+                               })()}
+                           </div>
+
+                           <div className="mt-3 flex gap-2">
+                               <button 
+                                 onClick={() => handleDefenderReaction(null)}
+                                 className="px-3 py-1.5 rounded bg-slate-800 text-gray-400 hover:bg-slate-700 hover:text-white text-xs font-bold border border-slate-700 transition-colors whitespace-nowrap"
+                               >
+                                 承伤(放弃)
+                               </button>
+                               <div className="flex-grow text-right text-[10px] text-gray-500 flex items-center justify-end">
+                                   点击下方卡牌应对 ⬇
+                               </div>
+                           </div>
+                       </div>
+                   </div>
                </div>
            )}
            
@@ -701,7 +834,7 @@ const App: React.FC = () => {
 
            {/* Game Over */}
            {gameState.phase === 'GAME_OVER' && (
-               <div className="flex flex-col items-center gap-6 bg-black/60 p-8 rounded-3xl backdrop-blur-sm border border-white/10">
+               <div className="flex flex-col items-center gap-6 bg-black/60 p-8 rounded-3xl backdrop-blur-sm border border-white/10 relative z-50">
                    <div className="text-5xl font-black text-white drop-shadow-[0_0_10px_rgba(255,255,255,0.5)] tracking-widest">胜负已分</div>
                    <button 
                     onClick={() => window.location.reload()}
@@ -741,8 +874,8 @@ const App: React.FC = () => {
                     if (card.type === CardType.Defense && bottomPlayer.persistentShield) disabled = true;
                 }
 
-                // Updated class for visibility: just opacity-60, no grayscale
-                const opacityClass = disabled ? 'opacity-60 scale-95 pointer-events-none' : 'hover:z-20';
+                // Updated class for visibility: just opacity-90, no grayscale, no pointer-events-none (to allow cursor to show)
+                const opacityClass = disabled ? 'opacity-90' : 'hover:z-20';
                 
                 return (
                     <div key={card.id} className={`transition-all duration-300 ${opacityClass}`}>

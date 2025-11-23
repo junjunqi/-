@@ -12,6 +12,13 @@ interface HeroDisplayProps {
 const HeroDisplay: React.FC<HeroDisplayProps> = ({ hero, isCurrentTurn, isOpponent }) => {
   const hpPercent = (hero.hp / hero.maxHp) * 100;
   
+  // Dynamic positioning for tooltip
+  // CHANGED: Tooltip now appears to the RIGHT of the hero card to avoid covering hands (top or bottom)
+  // On very small screens, it might still overlap, but for desktop/tablet play this clears the card area.
+  const tooltipPositionClass = "left-[100%] ml-4 top-1/2 -translate-y-1/2 origin-left";
+
+  const arrowPositionClass = "top-1/2 -translate-y-1/2 -left-2 rotate-45 border-l border-b";
+
   return (
     <div className={`relative z-30 group flex items-center p-3 md:p-4 rounded-xl transition-all duration-300 border-2 ${
       isCurrentTurn ? 'bg-white border-yellow-400 shadow-lg scale-[1.02]' : 'bg-gray-100 border-gray-200 opacity-90'
@@ -69,11 +76,11 @@ const HeroDisplay: React.FC<HeroDisplayProps> = ({ hero, isCurrentTurn, isOppone
       </div>
 
       {/* Skill Tooltip */}
-      <div className="absolute bottom-full mb-4 left-1/2 -translate-x-1/2 w-80 bg-slate-900/95 backdrop-blur text-white text-sm p-4 rounded-xl shadow-2xl opacity-0 group-hover:opacity-100 pointer-events-none transition-all duration-200 z-50 text-center border border-yellow-500/50 transform group-hover:scale-105 origin-bottom">
+      <div className={`absolute ${tooltipPositionClass} w-80 bg-slate-900/95 backdrop-blur text-white text-sm p-4 rounded-xl shadow-2xl opacity-0 group-hover:opacity-100 pointer-events-none transition-all duration-200 z-50 text-center border border-yellow-500/50 transform group-hover:scale-105 hidden md:block`}>
           <div className="font-bold text-yellow-400 mb-2 text-lg tracking-widest border-b border-white/10 pb-1">英雄天赋</div>
           <div className="leading-relaxed text-gray-200">{HERO_DESCRIPTIONS[hero.kind]}</div>
           {/* Arrow */}
-          <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-4 h-4 bg-slate-900 border-r border-b border-yellow-500/50 rotate-45"></div>
+          <div className={`absolute ${arrowPositionClass} w-4 h-4 bg-slate-900 border-yellow-500/50`}></div>
       </div>
       
       {isOpponent && isCurrentTurn && (

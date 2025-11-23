@@ -61,6 +61,7 @@ export interface GameState {
     attackerIndex: number;
     card: Card;
     initialDamage: number;
+    ignoreShield?: boolean;
   } | null;
   
   // Turn specific flags

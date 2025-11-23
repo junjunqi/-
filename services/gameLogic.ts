@@ -1,3 +1,4 @@
+
 import { Card, Element, Hero, HeroKind, ShieldBuff, CardType } from '../types';
 import { FiveElementRules, ELEMENT_CN } from '../constants';
 
@@ -19,33 +20,37 @@ export const shuffleDeck = (deck: Card[]): Card[] => {
 };
 
 // Calculation Logic
-export const calculateAttackDamage = (attacker: Hero, card: Card): { damage: number, log: string[], effect: CalculationResult['effect'] } => {
+export const calculateAttackDamage = (attacker: Hero, card: Card): { damage: number, log: string[], effect: CalculationResult['effect'], ignoreShield: boolean } => {
   let damage = 1;
   const logs: string[] = [];
   let effect: CalculationResult['effect'] = 'NONE';
+  let ignoreShield = false;
 
-  // 1. Hero Generates Card -> x2
+  // 1. Hero Passives (Calculated First)
+  
+  // Fire Hero: Damage * 2
+  if (attacker.kind === HeroKind.FireHero) {
+    damage *= 2;
+    effect = 'PASSIVE';
+    logs.push(`【被动】烈焰武者特性触发，伤害翻倍！`);
+  }
+
+  // Metal Hero: Counter Attack * 2 + Ignore Shield
+  if (attacker.kind === HeroKind.MetalHero && attacker.hasMetalAttackBuff) {
+    damage *= 2;
+    ignoreShield = true;
+    effect = 'PASSIVE';
+    logs.push(`【反击】金英雄触发反击特性：伤害翻倍且无视护盾！`);
+  }
+
+  // 2. Elemental Generation (Attribute Calculation) -> x2
   if (FiveElementRules.generates(attacker.element, card.element)) {
     damage *= 2;
     effect = 'GENERATE';
     logs.push(`【相生】英雄(${ELEMENT_CN[attacker.element]}) 生 卡牌(${ELEMENT_CN[card.element]})，伤害翻倍！`);
   }
 
-  // 2. Fire Hero Passive
-  if (attacker.kind === HeroKind.FireHero) {
-    damage += 1;
-    if (effect === 'NONE') effect = 'PASSIVE';
-    logs.push(`【被动】烈焰武者特性触发，伤害 +1。`);
-  }
-
-  // 3. Metal Hero Buff
-  if (attacker.kind === HeroKind.MetalHero && attacker.hasMetalAttackBuff) {
-    damage += 1;
-    if (effect === 'NONE') effect = 'PASSIVE';
-    logs.push(`【反击】金英雄上次受到伤害，本次伤害 +1。`);
-  }
-
-  return { damage, log: logs, effect };
+  return { damage, log: logs, effect, ignoreShield };
 };
 
 export const calculateDefenseValue = (defender: Hero, card: Card): { value: number, log: string[], effect: CalculationResult['effect'] } => {

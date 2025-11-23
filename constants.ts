@@ -1,3 +1,4 @@
+
 import { Element, HeroKind, Card, CardType } from './types';
 
 export const INITIAL_HAND_SIZE = 5;
@@ -43,9 +44,9 @@ export const HERO_NAMES: Record<HeroKind, string> = {
 
 export const HERO_DESCRIPTIONS: Record<HeroKind, string> = {
   [HeroKind.WoodHero]: "苍藤巫 (木)：使用【恢复】卡时，回复效果翻倍。",
-  [HeroKind.FireHero]: "烈焰武者 (火)：使用【攻击】卡时，伤害 +1。",
+  [HeroKind.FireHero]: "烈焰武者 (火)：使用【攻击】卡时，伤害翻倍。",
   [HeroKind.EarthHero]: "压山守卫 (土)：使用【防御】卡时，护盾效果翻倍。",
-  [HeroKind.MetalHero]: "破锋将 (金)：若本回合受到过伤害，下一次攻击伤害 +1。",
+  [HeroKind.MetalHero]: "破锋将 (金)：若本回合受到过伤害，下一次攻击伤害翻倍且无视护盾。",
   [HeroKind.WaterHero]: "灵潮术士 (水)：若单次受到伤害 ≥ 2，超出部分反弹给攻击者。"
 };
 
@@ -54,7 +55,7 @@ export const generateId = () => Math.random().toString(36).substr(2, 9);
 
 // Base Deck Factory
 export const createBaseDeck = (): Card[] => {
-  const cards: Omit<Card, 'id'>[] = [
+  const uniqueCards: Omit<Card, 'id'>[] = [
     // Attack
     { name: "烈焰击", element: Element.Fire, type: CardType.Attack },
     { name: "藤刺打", element: Element.Wood, type: CardType.Attack },
@@ -75,11 +76,25 @@ export const createBaseDeck = (): Card[] => {
     { name: "清泉润体", element: Element.Water, type: CardType.Heal },
   ];
 
-  // Create 3 copies of the base set to make a playable deck size
   const fullDeck: Card[] = [];
-  for(let i=0; i<3; i++) {
-      cards.forEach(c => fullDeck.push({ ...c, id: generateId() }));
-  }
+
+  // Game Balance Logic:
+  // High aggression to end games.
+  // Weights: Attack x5 (Aggressive), Defense x2 (Tactical), Heal x1 (Rare).
+  
+  uniqueCards.forEach(cardProto => {
+      let copies = 0;
+      if (cardProto.type === CardType.Attack) copies = 5; 
+      else if (cardProto.type === CardType.Defense) copies = 2; 
+      else if (cardProto.type === CardType.Heal) copies = 1;
+
+      for(let i=0; i<copies; i++) {
+          fullDeck.push({ ...cardProto, id: generateId() });
+      }
+  });
+
+  // Total Deck Size: (5 Att * 5) + (5 Def * 2) + (5 Heal * 1) = 25 + 10 + 5 = 40 cards per cycle.
+  
   return fullDeck;
 };
 
