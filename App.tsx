@@ -55,10 +55,9 @@ const App: React.FC = () => {
   // New: Interaction Link HUD State
   const [interactionTip, setInteractionTip] = useState<{ source: Element, target: Element, type: 'GENERATE' | 'OVERCOME' } | null>(null);
 
-  // Preload BGM early to reduce first-play delay
-  useEffect(() => {
-      if (audio.preloadBGM) audio.preloadBGM();
-  }, []);
+  // Mobile UX State
+  const [showDiagramModal, setShowDiagramModal] = useState(false);
+  const [isAlertMinimized, setIsAlertMinimized] = useState(false);
 
   // AI Timer Ref
   const aiTimeoutRef = useRef<number | null>(null);
@@ -123,6 +122,13 @@ const App: React.FC = () => {
 
     // ADDED gameState.hands to dependencies to trigger re-eval after playing Heal/Defense
   }, [gameState.phase, gameState.turnCount, gameState.currentPlayerIndex, gameState.pendingAttack, gameState.hasAttackedThisTurn, gameState.hands]);
+
+  // Auto-Maximize Alert on new attack
+  useEffect(() => {
+    if (gameState.pendingAttack) {
+      setIsAlertMinimized(false);
+    }
+  }, [gameState.pendingAttack]);
 
   // ---------------- Helpers ----------------
   const addLog = (msg: string) => {
@@ -678,12 +684,25 @@ const App: React.FC = () => {
       {/* Sidebar */}
       <div className="w-full md:w-1/4 bg-slate-950 border-b md:border-r border-slate-800 flex flex-col p-4 order-1 md:order-2 shadow-2xl z-40">
         <div className="mb-4">
-          <h1 className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-yellow-500 to-yellow-200 flex justify-between items-center">
-              <span>第 {gameState.turnCount} 回合</span>
-              <span className="text-xs px-3 py-1 bg-slate-800 border border-slate-700 rounded-full text-gray-300 font-normal">
+          <div className="flex justify-between items-center mb-2">
+             <h1 className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-yellow-500 to-yellow-200 flex items-center gap-2">
+                <span>第 {gameState.turnCount} 回合</span>
+             </h1>
+             {/* Mobile Diagram Toggle */}
+             <button 
+                onClick={() => setShowDiagramModal(true)}
+                className="md:hidden bg-slate-800 border border-yellow-600/50 text-yellow-500 text-xs px-3 py-1 rounded-full animate-pulse shadow-lg flex items-center gap-1 hover:bg-slate-700"
+             >
+                <span>🔮</span> 五行图
+             </button>
+          </div>
+          
+          <div className="flex justify-between items-center">
+             <span className="text-xs px-3 py-1 bg-slate-800 border border-slate-700 rounded-full text-gray-300 font-normal">
                   {isReactionPhase ? '防御阶段' : '出牌阶段'}
-              </span>
-          </h1>
+             </span>
+          </div>
+
           <p className="text-sm text-gray-400 mt-2 pl-1 border-l-2 border-yellow-600/30">
             {gameState.players[playerIdx].isAI 
                 ? (isReactionPhase ? `⚡ 电脑正在思考如何防御...` : `🤖 电脑正在思考出牌...`)
@@ -738,88 +757,113 @@ const App: React.FC = () => {
         <div className="h-24 md:h-32 flex items-center justify-center z-30 relative">
            {/* Player is reacting - NEW DEFENDER ALERT UI */}
            {isReactionPhase && !bottomPlayer.isAI && playerIdx === topPlayerIdx && gameState.pendingAttack && (
-               /* Using fixed center positioning but without backdrop to avoid blocking card clicks */
-               <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 animate-in zoom-in-95 duration-200 pointer-events-none">
-                   <div className="bg-slate-900 border-2 border-red-600 rounded-2xl shadow-2xl max-w-xl w-[90vw] md:w-auto overflow-hidden flex flex-col md:flex-row pointer-events-auto">
-                       
-                       {/* Left: Threat Intel */}
-                       <div className="p-4 bg-red-950/30 flex-1 flex flex-col items-center justify-center border-b md:border-b-0 md:border-r border-red-900/50 relative">
-                           <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-red-500 to-transparent"></div>
-                           <h3 className="text-red-400 uppercase tracking-widest font-bold text-[10px] mb-2">⚠️ 敌方攻击判定</h3>
-                           
-                           <div className="flex items-center gap-4">
-                               <div className={`w-16 h-20 rounded-lg border-2 flex flex-col items-center justify-center ${ELEMENT_COLORS[gameState.pendingAttack.card.element]}`}>
-                                   <ElementAvatar element={gameState.pendingAttack.card.element} className="w-8 h-8 mb-1" />
-                                   <div className="font-bold text-xs">{gameState.pendingAttack.card.name}</div>
-                               </div>
-                               <div className="text-center">
-                                    <div className="text-gray-400 text-[10px] uppercase font-bold">伤害</div>
-                                    <div className="text-3xl font-black text-white drop-shadow-md">
-                                      {gameState.pendingAttack.initialDamage}
-                                      {gameState.pendingAttack.ignoreShield && <span className="text-[10px] block text-yellow-500">⚡ 无视护盾</span>}
-                                    </div>
-                               </div>
-                           </div>
-                       </div>
+             <>
+               {!isAlertMinimized ? (
+                 /* Full Panel */
+                 /* UPDATED: top-[38%] for mobile to lift alert away from hand */
+                 <div className="absolute left-1/2 -translate-x-1/2 top-[38%] md:top-1/2 -translate-y-1/2 z-50 animate-in zoom-in-95 duration-200 pointer-events-none w-full flex justify-center">
+                     <div className="relative bg-slate-900 border-2 border-red-600 rounded-2xl shadow-2xl max-w-xl w-[90vw] md:w-auto overflow-hidden flex flex-col md:flex-row pointer-events-auto">
+                         
+                         {/* Minimize Button */}
+                         <button 
+                             onClick={() => setIsAlertMinimized(true)}
+                             className="absolute top-2 right-2 z-20 text-gray-500 hover:text-white bg-slate-950/50 hover:bg-red-600 rounded-full p-1.5 transition-colors backdrop-blur-sm"
+                             title="最小化提示"
+                         >
+                             <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                                 <path fillRule="evenodd" d="M5 10a1 1 0 011-1h8a1 1 0 110 2H6a1 1 0 01-1-1z" clipRule="evenodd" />
+                             </svg>
+                         </button>
 
-                       {/* Right: Tactical Analysis */}
-                       <div className="p-4 flex-[1.5] bg-slate-900 flex flex-col">
-                           <h3 className="text-yellow-500 uppercase tracking-widest font-bold text-[10px] mb-2 border-b border-gray-700 pb-1">
-                               🛡️ 战术建议
-                           </h3>
-                           
-                           <div className="space-y-2 flex-grow text-xs">
-                               {/* 1. Counter Defense Hint */}
-                               {(() => {
-                                   const attackEl = gameState.pendingAttack.card.element;
-                                   const counterEl = [Element.Wood, Element.Fire, Element.Earth, Element.Metal, Element.Water].find(e => FiveElementRules.overcomes(e, attackEl));
-                                   if (!counterEl) return null;
-                                   
-                                   const hasCounter = gameState.hands[bottomPlayerIdx].some(c => c.type === CardType.Defense && c.element === counterEl);
+                         {/* Left: Threat Intel */}
+                         <div className="p-3 md:p-4 bg-red-950/30 flex-1 flex flex-col items-center justify-center border-b md:border-b-0 md:border-r border-red-900/50 relative">
+                             <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-red-500 to-transparent"></div>
+                             <h3 className="text-red-400 uppercase tracking-widest font-bold text-[10px] mb-1 md:mb-2">⚠️ 敌方攻击判定</h3>
+                             
+                             <div className="flex items-center gap-4">
+                                 <div className={`w-16 h-20 rounded-lg border-2 flex flex-col items-center justify-center ${ELEMENT_COLORS[gameState.pendingAttack.card.element]}`}>
+                                     <ElementAvatar element={gameState.pendingAttack.card.element} className="w-8 h-8 mb-1" />
+                                     <div className="font-bold text-xs">{gameState.pendingAttack.card.name}</div>
+                                 </div>
+                                 <div className="text-center">
+                                      <div className="text-gray-400 text-[10px] uppercase font-bold">伤害</div>
+                                      <div className="text-3xl font-black text-white drop-shadow-md">
+                                        {gameState.pendingAttack.initialDamage}
+                                        {gameState.pendingAttack.ignoreShield && <span className="text-[10px] block text-yellow-500">⚡ 无视护盾</span>}
+                                      </div>
+                                 </div>
+                             </div>
+                         </div>
 
-                                   return (
-                                       <div className={`p-2 rounded border flex items-center gap-2 ${hasCounter ? 'bg-green-900/20 border-green-600/50' : 'bg-gray-800 border-gray-700'}`}>
-                                           <div className="text-lg">✨</div>
-                                           <div>
-                                               <div className={`font-bold ${hasCounter ? 'text-green-400' : 'text-gray-400'}`}>完美防御：{ELEMENT_CN[counterEl]}</div>
-                                               <div className="text-[10px] text-gray-500">防御值翻倍</div>
-                                           </div>
-                                       </div>
-                                   );
-                               })()}
+                         {/* Right: Tactical Analysis */}
+                         <div className="p-3 md:p-4 flex-[1.5] bg-slate-900 flex flex-col">
+                             <h3 className="text-yellow-500 uppercase tracking-widest font-bold text-[10px] mb-1 md:mb-2 border-b border-gray-700 pb-1">
+                                 🛡️ 战术建议
+                             </h3>
+                             
+                             <div className="space-y-2 flex-grow text-xs">
+                                 {/* 1. Counter Defense Hint */}
+                                 {(() => {
+                                     const attackEl = gameState.pendingAttack.card.element;
+                                     const counterEl = [Element.Wood, Element.Fire, Element.Earth, Element.Metal, Element.Water].find(e => FiveElementRules.overcomes(e, attackEl));
+                                     if (!counterEl) return null;
+                                     
+                                     const hasCounter = gameState.hands[bottomPlayerIdx].some(c => c.type === CardType.Defense && c.element === counterEl);
 
-                               {/* 2. Weakness Warning */}
-                               {(() => {
-                                   const attackEl = gameState.pendingAttack.card.element;
-                                   const weakEl = [Element.Wood, Element.Fire, Element.Earth, Element.Metal, Element.Water].find(e => FiveElementRules.overcomes(attackEl, e));
-                                   if (!weakEl) return null;
+                                     return (
+                                         <div className={`p-2 rounded border flex items-center gap-2 ${hasCounter ? 'bg-green-900/20 border-green-600/50' : 'bg-gray-800 border-gray-700'}`}>
+                                             <div className="text-lg">✨</div>
+                                             <div>
+                                                 <div className={`font-bold ${hasCounter ? 'text-green-400' : 'text-gray-400'}`}>完美防御：{ELEMENT_CN[counterEl]}</div>
+                                                 <div className="text-[10px] text-gray-500">防御值翻倍</div>
+                                             </div>
+                                         </div>
+                                     );
+                                 })()}
 
-                                   return (
-                                       <div className="p-2 rounded border bg-red-900/10 border-red-900/30 flex items-center gap-2">
-                                           <div className="text-lg">🚫</div>
-                                           <div>
-                                               <div className="font-bold text-red-400">避免：{ELEMENT_CN[weakEl]}</div>
-                                               <div className="text-[10px] text-gray-500">防御值减半</div>
-                                           </div>
-                                       </div>
-                                   );
-                               })()}
-                           </div>
+                                 {/* 2. Weakness Warning */}
+                                 {(() => {
+                                     const attackEl = gameState.pendingAttack.card.element;
+                                     const weakEl = [Element.Wood, Element.Fire, Element.Earth, Element.Metal, Element.Water].find(e => FiveElementRules.overcomes(attackEl, e));
+                                     if (!weakEl) return null;
 
-                           <div className="mt-3 flex gap-2">
-                               <button 
-                                 onClick={() => handleDefenderReaction(null)}
-                                 className="px-3 py-1.5 rounded bg-slate-800 text-gray-400 hover:bg-slate-700 hover:text-white text-xs font-bold border border-slate-700 transition-colors whitespace-nowrap"
-                               >
-                                 承伤(放弃)
-                               </button>
-                               <div className="flex-grow text-right text-[10px] text-gray-500 flex items-center justify-end">
-                                   点击下方卡牌应对 ⬇
-                               </div>
-                           </div>
-                       </div>
-                   </div>
-               </div>
+                                     return (
+                                         <div className="p-2 rounded border bg-red-900/10 border-red-900/30 flex items-center gap-2">
+                                             <div className="text-lg">🚫</div>
+                                             <div>
+                                                 <div className="font-bold text-red-400">避免：{ELEMENT_CN[weakEl]}</div>
+                                                 <div className="text-[10px] text-gray-500">防御值减半</div>
+                                             </div>
+                                         </div>
+                                     );
+                                 })()}
+                             </div>
+
+                             <div className="mt-3 flex gap-2">
+                                 <button 
+                                   onClick={() => handleDefenderReaction(null)}
+                                   className="px-3 py-1.5 rounded bg-slate-800 text-gray-400 hover:bg-slate-700 hover:text-white text-xs font-bold border border-slate-700 transition-colors whitespace-nowrap"
+                                 >
+                                   承伤(放弃)
+                                 </button>
+                                 <div className="flex-grow text-right text-[10px] text-gray-500 flex items-center justify-end">
+                                     点击下方卡牌应对 ⬇
+                                 </div>
+                             </div>
+                         </div>
+                     </div>
+                 </div>
+               ) : (
+                 /* Minimized State */
+                 <button 
+                     onClick={() => setIsAlertMinimized(false)}
+                     className="absolute left-1/2 -translate-x-1/2 top-[30%] z-50 bg-slate-900/90 text-red-500 border border-red-500 px-4 py-2 rounded-full font-bold shadow-lg animate-pulse backdrop-blur-md flex items-center gap-2 pointer-events-auto hover:bg-slate-800 hover:scale-105 transition-all"
+                 >
+                     <span>⚠️</span>
+                     <span>查看敌方攻势</span>
+                 </button>
+               )}
+             </>
            )}
            
            {/* Normal Turn End Button (Only for Human Player) */}
@@ -907,6 +951,45 @@ const App: React.FC = () => {
         </div>
 
       </div>
+      
+      {/* Mobile Diagram Modal */}
+      {showDiagramModal && (
+        <div 
+            className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200" 
+            onClick={() => setShowDiagramModal(false)}
+        >
+            <div 
+                className="bg-slate-900 border-2 border-yellow-600/50 p-6 rounded-2xl shadow-2xl relative max-w-sm w-full flex flex-col items-center" 
+                onClick={e => e.stopPropagation()}
+            >
+                <h3 className="text-xl text-yellow-500 font-bold mb-6 tracking-widest uppercase border-b border-yellow-600/30 pb-2 w-full text-center">
+                    五行生克阵法
+                </h3>
+                <div className="w-64 h-64">
+                    <FiveElementsDiagram 
+                        activeLink={interactionTip ? { 
+                            source: interactionTip.source, 
+                            target: interactionTip.target, 
+                            type: interactionTip.type 
+                        } : undefined} 
+                        className="w-full h-full"
+                    />
+                </div>
+                <div className="text-gray-400 text-xs mt-6 text-center space-y-1">
+                    <p className="text-green-400 font-bold">外圈 (绿线) 为相生 <span className="text-gray-500">- 效果翻倍</span></p>
+                    <p className="text-red-400 font-bold">内圈 (红线) 为相克 <span className="text-gray-500">- 效果压制/暴击</span></p>
+                    <p className="text-gray-600 mt-2 pt-2 border-t border-gray-800">点击任意处关闭</p>
+                </div>
+                <button 
+                    onClick={() => setShowDiagramModal(false)} 
+                    className="absolute top-2 right-2 text-gray-500 hover:text-white p-2 rounded-full hover:bg-slate-800 transition-colors"
+                >
+                    ✕
+                </button>
+            </div>
+        </div>
+      )}
+
     </div>
   );
 };

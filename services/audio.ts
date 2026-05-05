@@ -10,16 +10,6 @@ export class AudioService {
         // Initialize lazily
     }
 
-    preloadBGM() {
-        if (!this.bgmAudio) {
-            this.bgmAudio = new Audio('/bgm.mp3');
-            this.bgmAudio.loop = true;
-            this.bgmAudio.volume = 0.35;
-            this.bgmAudio.preload = 'auto';
-            this.bgmAudio.load();
-        }
-    }
-
     init() {
         if (this.ctx) return;
         try {
@@ -29,8 +19,11 @@ export class AudioService {
             this.masterGain.gain.value = 0.3; 
             this.masterGain.connect(this.ctx.destination);
 
-            // Ensure BGM element exists & preloaded
-            this.preloadBGM();
+            // Setup HTML5 Audio for BGM
+            // Epic Action / Drum & Bass style
+            this.bgmAudio = new Audio('https://cdn.pixabay.com/audio/2023/09/28/audio_270885b9a0.mp3'); 
+            this.bgmAudio.loop = true;
+            this.bgmAudio.volume = 0.4;
             
         } catch (e) {
             console.error("Web Audio API not supported");
